@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
 
+import { dedent } from '../../__testUtils__/dedent';
 import { expectJSON } from '../../__testUtils__/expectJSON';
 
 import { inspect } from '../../jsutils/inspect';
@@ -44,6 +45,65 @@ describe('Execute: Handles basic execution tasks', () => {
     expect(() => executeSync({ document })).to.throw(
       'Expected undefined to be a GraphQL schema.',
     );
+  });
+
+  it('ignores descriptions on executable definitions when executing', () => {
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Type',
+        fields: {
+          fieldA: {
+            type: GraphQLString,
+            args: { argA: { type: GraphQLInt } },
+            resolve: (_source, { argA }) => `a:${argA}`,
+          },
+        },
+      }),
+    });
+
+    const result = executeSync({
+      schema,
+      document: parse(dedent`
+        """Operation description"""
+        query Q(
+          "Variable description"
+          $argA: Int
+        ) {
+          fieldA(argA: $argA)
+          ...FragmentA
+        }
+
+        """Fragment description"""
+        fragment FragmentA on Type {
+          extra: fieldA(argA: 42)
+        }
+      `),
+      variableValues: { argA: 1 },
+    });
+
+    expectJSON(result).toDeepEqual({
+      data: {
+        fieldA: 'a:1',
+        extra: 'a:42',
+      },
+    });
+
+    const resultWithoutDescriptions = executeSync({
+      schema,
+      document: parse(dedent`
+        query Q($argA: Int) {
+          fieldA(argA: $argA)
+          ...FragmentA
+        }
+
+        fragment FragmentA on Type {
+          extra: fieldA(argA: 42)
+        }
+      `),
+      variableValues: { argA: 1 },
+    });
+
+    expectJSON(resultWithoutDescriptions).toDeepEqual(result);
   });
 
   it('throws on invalid variables', () => {

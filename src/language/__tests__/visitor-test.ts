@@ -1361,4 +1361,60 @@ describe('Visitor', () => {
       ]);
     });
   });
+
+  it('visits descriptions of executable definitions', () => {
+    const ast = parse(
+      [
+        '"Operation description"',
+        'query Q("Variable description" $v: Int) {',
+        '  field',
+        '}',
+        '',
+        '"""Fragment description"""',
+        'fragment F on Object {',
+        '  field',
+        '}',
+      ].join('\n'),
+      { noLocation: true },
+    );
+
+    const visitedDescriptions: Array<string> = [];
+    const visitedPaths: Array<string> = [];
+    visit(ast, {
+      StringValue(node, _key, _parent, path) {
+        visitedDescriptions.push(node.value);
+        visitedPaths.push(path.join('.'));
+      },
+    });
+
+    expect(visitedDescriptions).to.deep.equal([
+      'Operation description',
+      'Variable description',
+      'Fragment description',
+    ]);
+    expect(visitedPaths).to.deep.equal([
+      'definitions.0.description',
+      'definitions.0.variableDefinitions.0.description',
+      'definitions.1.description',
+    ]);
+  });
+
+  it('allows editing descriptions of executable definitions while visiting', () => {
+    const ast = parse(
+      ['"old"', 'query Q("old var" $v: Int) { field }'].join('\n'),
+      { noLocation: true },
+    );
+
+    const editedAST = visit(ast, {
+      StringValue: {
+        leave(node) {
+          return { ...node, value: 'new' };
+        },
+      },
+    });
+
+    expect(editedAST).to.deep.equal(
+      parse('"new"\nquery Q("new" $v: Int) { field }', { noLocation: true }),
+    );
+  });
 });

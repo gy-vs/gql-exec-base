@@ -7,6 +7,7 @@ import { GraphQLError } from '../../error/GraphQLError';
 
 import type { DirectiveNode } from '../../language/ast';
 import { parse } from '../../language/parser';
+import { visit } from '../../language/visitor';
 
 import { buildSchema } from '../../utilities/buildASTSchema';
 import { TypeInfo } from '../../utilities/TypeInfo';
@@ -15,6 +16,22 @@ import { validate } from '../validate';
 import type { ValidationContext } from '../ValidationContext';
 
 import { testSchema } from './harness';
+
+// Strips descriptions from executable definition nodes.
+const removeDescriptions = {
+  OperationDefinition(node: any) {
+    const { description, ...rest } = node;
+    return description ? rest : undefined;
+  },
+  FragmentDefinition(node: any) {
+    const { description, ...rest } = node;
+    return description ? rest : undefined;
+  },
+  VariableDefinition(node: any) {
+    const { description, ...rest } = node;
+    return description ? rest : undefined;
+  },
+};
 
 describe('Validate: Supports full validation', () => {
   it('rejects invalid documents', () => {
@@ -85,6 +102,112 @@ describe('Validate: Supports full validation', () => {
       'Cannot query field "meowsVolume" on type "Cat". Did you mean "meowsVolume"?',
       'Cannot query field "barkVolume" on type "Dog". Did you mean "barkVolume"?',
     ]);
+  });
+
+  it('treats descriptions on executable definitions as pure annotations', () => {
+    const withDescriptions = parse(`
+      """Fetch a human"""
+      query GetHuman(
+        "The human ID"
+        $id: ID!
+      ) {
+        human(id: $id) {
+          name
+          pets {
+            ...PetFields
+          }
+        }
+      }
+
+      """Pet fields"""
+      fragment PetFields on Pet {
+        name
+      }
+    `);
+    const withoutDescriptions = parse(`
+      query GetHuman(
+        $id: ID!
+      ) {
+        human(id: $id) {
+          name
+          pets {
+            ...PetFields
+          }
+        }
+      }
+
+      fragment PetFields on Pet {
+        name
+      }
+    `);
+
+    expectJSON(validate(testSchema, withDescriptions)).toDeepEqual(
+      validate(testSchema, withoutDescriptions),
+    );
+    expectJSON(validate(testSchema, withDescriptions)).toDeepEqual([]);
+  });
+
+  it('reports identical validation errors whether or not descriptions are present', () => {
+    // Descriptions must not add, remove, or alter any validation diagnostics.
+    const source = `
+      "Query description"
+      query GetHuman($unused: String) {
+        unknownField
+        ...MissingFragment
+      }
+
+      "Fragment description"
+      fragment PetFields on Pet {
+        name
+        undefinedField
+      }
+    `;
+    const invalidWithDescriptions = parse(source);
+    const invalidWithoutDescriptions = visit(
+      parse(source, { noLocation: true }),
+      removeDescriptions,
+    );
+
+    expect(invalidWithoutDescriptions).to.deep.equal(
+      parse(
+        `
+        query GetHuman($unused: String) {
+          unknownField
+          ...MissingFragment
+        }
+
+        fragment PetFields on Pet {
+          name
+          undefinedField
+        }
+      `,
+        { noLocation: true },
+      ),
+    );
+
+    const withErrors = validate(testSchema, invalidWithDescriptions);
+    const withoutErrors = validate(
+      testSchema,
+      visit(invalidWithDescriptions, removeDescriptions),
+    );
+    // Descriptions may not change which errors are reported; order is not
+    // significant, so compare the sorted lists of messages.
+    const withMessages = withErrors
+      .map((error) => error.message)
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const withoutMessages = withoutErrors
+      .map((error) => error.message)
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    expect(withMessages).to.deep.equal(withoutMessages);
+    expect(withMessages).to.deep.equal(
+      [
+        'Cannot query field "unknownField" on type "QueryRoot".',
+        'Unknown fragment "MissingFragment".',
+        'Cannot query field "undefinedField" on type "Pet".',
+        'Fragment "PetFields" is never used.',
+        'Variable "$unused" is never used in operation "GetHuman".',
+      ].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    );
   });
 
   it('validates using a custom rule', () => {

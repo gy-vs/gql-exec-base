@@ -653,3 +653,154 @@ describe('Parser', () => {
     });
   });
 });
+
+describe('Parser: descriptions in executable documents', () => {
+  it('parses description of a named operation', () => {
+    const doc = parse('"Fetch user"\nquery Q {\n  field\n}');
+
+    expect(doc.definitions[0]).to.include({
+      kind: Kind.OPERATION_DEFINITION,
+      operation: 'query',
+    });
+    expectJSON(doc).toDeepNestedProperty('definitions[0].description', {
+      kind: Kind.STRING,
+      value: 'Fetch user',
+      block: false,
+      loc: { start: 0, end: 12 },
+    });
+
+    const blockDoc = parse('"""\nFetch\nuser\n"""\nquery Q {\n  field\n}');
+    expectJSON(blockDoc).toDeepNestedProperty('definitions[0].description', {
+      kind: Kind.STRING,
+      value: 'Fetch\nuser',
+      block: true,
+      loc: { start: 0, end: 18 },
+    });
+  });
+
+  it('parses description before each operation type', () => {
+    for (const operation of ['query', 'mutation', 'subscription']) {
+      const doc = parse(`"${operation} description"\n${operation} Q { field }`);
+      expectJSON(doc).toDeepNestedProperty('definitions[0].description', {
+        kind: Kind.STRING,
+        value: `${operation} description`,
+        block: false,
+        loc: { start: 0, end: operation.length + 14 },
+      });
+      expect(doc.definitions[0]).to.have.property('operation', operation);
+    }
+  });
+
+  it('parses description of a fragment definition', () => {
+    const doc = parse(
+      '"Fragment description"\nfragment F on QueryRoot {\n  __typename\n}',
+    );
+
+    expectJSON(doc).toDeepNestedProperty('definitions[0].description', {
+      kind: Kind.STRING,
+      value: 'Fragment description',
+      block: false,
+      loc: { start: 0, end: 22 },
+    });
+  });
+
+  it('parses description of a variable definition', () => {
+    const doc = parse(
+      'query Q(\n  "var description"\n  $v: Int\n) {\n  field\n}',
+    );
+
+    expectJSON(doc).toDeepNestedProperty(
+      'definitions[0].variableDefinitions[0].description',
+      {
+        kind: Kind.STRING,
+        value: 'var description',
+        block: false,
+        loc: { start: 11, end: 28 },
+      },
+    );
+    expectJSON(doc).toDeepNestedProperty(
+      'definitions[0].variableDefinitions[0].loc',
+      { start: 11, end: 38 },
+    );
+  });
+
+  it('parses block string descriptions on all supported positions', () => {
+    const doc = parse(dedent`
+      """
+      Fetch user
+      """
+      query Q(
+        """var desc"""
+        $v: Int = 1 @skip(if: true)
+      ) {
+        field
+      }
+
+      """frag desc"""
+      fragment F on QueryRoot {
+        __typename
+      }
+    `);
+
+    const operation = doc.definitions[0];
+    const fragment = doc.definitions[1];
+
+    expect(operation).to.have.nested.property(
+      'description.value',
+      'Fetch user',
+    );
+    expect(operation).to.have.nested.property('description.block', true);
+    expect(operation).to.have.nested.property(
+      'variableDefinitions[0].description.value',
+      'var desc',
+    );
+    expect(operation).to.have.nested.property(
+      'variableDefinitions[0].description.block',
+      true,
+    );
+    expect(fragment).to.have.nested.property('description.value', 'frag desc');
+    expect(fragment).to.have.nested.property('description.block', true);
+  });
+
+  it('does not include a description field when there is no description', () => {
+    const doc = parse('query Q($v: Int) { field }');
+
+    expect(doc.definitions[0]).to.not.have.property('description');
+    expect(doc.definitions[0])
+      .to.have.nested.property('variableDefinitions[0]')
+      .that.does.not.have.property('description');
+
+    const fragmentDoc = parse('fragment F on QueryRoot { __typename }');
+    expect(fragmentDoc.definitions[0]).to.not.have.property('description');
+  });
+
+  it('does not allow a description before an anonymous shorthand query', () => {
+    expectSyntaxError('"Description"\n{ field }').to.deep.equal({
+      message: 'Syntax Error: Unexpected "{".',
+      locations: [{ line: 2, column: 1 }],
+    });
+
+    expectSyntaxError('"""Description"""\n{ field }').to.deep.equal({
+      message: 'Syntax Error: Unexpected "{".',
+      locations: [{ line: 2, column: 1 }],
+    });
+  });
+
+  it('does not allow a description before an extension definition', () => {
+    expectSyntaxError(
+      '"Description"\nextend type Hello { world: String }',
+    ).to.deep.equal({
+      message:
+        'Syntax Error: Unexpected description, descriptions are supported only on type definitions.',
+      locations: [{ line: 1, column: 1 }],
+    });
+  });
+
+  it('throws when a description is not followed by an executable definition', () => {
+    expectSyntaxError('"Description" notADefinition { field }').to.deep.equal({
+      message:
+        'Syntax Error: Unexpected description, descriptions are supported only on type definitions.',
+      locations: [{ line: 1, column: 1 }],
+    });
+  });
+});
