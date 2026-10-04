@@ -1,12 +1,15 @@
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
 
+import { dedent } from '../../__testUtils__/dedent';
 import { expectJSON } from '../../__testUtils__/expectJSON';
 
 import { GraphQLError } from '../../error/GraphQLError';
 
 import type { DirectiveNode } from '../../language/ast';
+import { Kind } from '../../language/kinds';
 import { parse } from '../../language/parser';
+import { visit } from '../../language/visitor';
 
 import { buildSchema } from '../../utilities/buildASTSchema';
 import { TypeInfo } from '../../utilities/TypeInfo';
@@ -122,6 +125,123 @@ describe('Validate: Supports full validation', () => {
         locations: [{ line: 3, column: 14 }],
       },
     ]);
+  });
+});
+
+describe('Validate: Executable descriptions', () => {
+  function withoutDescriptions(source: string) {
+    return visit(parse(source), {
+      [Kind.OPERATION_DEFINITION]: removeDescription,
+      [Kind.FRAGMENT_DEFINITION]: removeDescription,
+      [Kind.VARIABLE_DEFINITION]: removeDescription,
+    });
+  }
+
+  function removeDescription(node: any) {
+    if (node.description == null) {
+      return undefined;
+    }
+    const stripped: any = {};
+    for (const key of Object.keys(node)) {
+      if (key !== 'description') {
+        stripped[key] = node[key];
+      }
+    }
+    return stripped;
+  }
+
+  function expectEquivalentValidation(source: string) {
+    const withDescriptions = parse(source);
+    const stripped = withoutDescriptions(source);
+
+    expectJSON(
+      validate(testSchema, withDescriptions).map((error) => ({
+        message: error.message,
+        locations: error.locations,
+      })),
+    ).toDeepEqual(
+      validate(testSchema, stripped).map((error) => ({
+        message: error.message,
+        locations: error.locations,
+      })),
+    );
+  }
+
+  it('descriptions are ignored when validating valid documents', () => {
+    expectEquivalentValidation(dedent`
+      """Fetch a human"""
+      query GetHuman(
+        "an id"
+        $id: String
+      ) {
+        human(id: $id) {
+          name
+          ...HumanFields
+        }
+      }
+
+      """common human fields"""
+      fragment HumanFields on Human {
+        name
+        pets {
+          name
+        }
+      }
+    `);
+  });
+
+  it('descriptions do not mask validation errors', () => {
+    expectEquivalentValidation(`
+      "operation"
+      query Q {
+        nonExistentField
+      }
+    `);
+
+    expectEquivalentValidation(`
+      query Q(
+        "variable description"
+        $x: NonExistentType
+      ) {
+        human { name }
+      }
+    `);
+
+    expectEquivalentValidation(`
+      query Q {
+        human { ...NonExistentFragment }
+      }
+
+      "fragment"
+      fragment NonExistentFragment on NonExistentType {
+        name
+      }
+    `);
+  });
+
+  it('variable description strings are not checked as values', () => {
+    // The description is a String while the variable type is Int; without
+    // special handling ValuesOfCorrectType would report a spurious error.
+    const doc = parse(`
+      query Q(
+        "id of the human"
+        $id: ID
+      ) {
+        human(id: $id) { name }
+      }
+    `);
+
+    expectJSON(validate(testSchema, doc)).toDeepEqual([]);
+
+    // String default values at the same position are still validated.
+    const invalidDoc = parse(`
+      query Q($id: Int = "not an int") {
+        human(id: $id) { name }
+      }
+    `);
+    expect(
+      validate(testSchema, invalidDoc).map((error) => error.message),
+    ).to.include('Int cannot represent non-integer value: "not an int"');
   });
 });
 

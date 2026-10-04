@@ -75,6 +75,123 @@ describe('Printer: Query document', () => {
     `);
   });
 
+  it('prints operation descriptions', () => {
+    const queryAST = parse('"Fetch a user" query GetUser { id }');
+    expect(print(queryAST)).to.equal(dedent`
+      "Fetch a user"
+      query GetUser {
+        id
+      }
+    `);
+
+    const blockQueryAST = parse('"""Fetch a user"""\nquery GetUser { id }');
+    expect(print(blockQueryAST)).to.equal(dedent`
+      """Fetch a user"""
+      query GetUser {
+        id
+      }
+    `);
+  });
+
+  it('prints fragment descriptions', () => {
+    const fragmentAST = parse('"User fields" fragment Foo on Test { id }');
+    expect(print(fragmentAST)).to.equal(dedent`
+      "User fields"
+      fragment Foo on Test {
+        id
+      }
+    `);
+
+    const blockFragmentAST = parse(
+      '"""User fields"""\nfragment Foo on Test { id }',
+    );
+    expect(print(blockFragmentAST)).to.equal(dedent`
+      """User fields"""
+      fragment Foo on Test {
+        id
+      }
+    `);
+  });
+
+  it('prints variable definition descriptions', () => {
+    const queryAST = parse('query GetUser("id of the user" $id: ID) { id }');
+    expect(print(queryAST)).to.equal(dedent`
+      query GetUser("id of the user" $id: ID) {
+        id
+      }
+    `);
+  });
+
+  it('prints descriptions as part of a full document', () => {
+    const queryAST = parse(dedent`
+      """Fetch a user"""
+      query GetUser(
+        "id of the user"
+        $id: ID
+      ) @onQuery {
+        user(id: $id) {
+          ...UserFields
+        }
+      }
+
+      """Common user fields"""
+      fragment UserFields on User @onFragment {
+        id
+      }
+    `);
+
+    expect(print(queryAST)).to.equal(dedent`
+      """Fetch a user"""
+      query GetUser("id of the user" $id: ID) @onQuery {
+        user(id: $id) {
+          ...UserFields
+        }
+      }
+
+      """Common user fields"""
+      fragment UserFields on User @onFragment {
+        id
+      }
+    `);
+  });
+
+  it('prints executable descriptions without altering ast and round-trips', () => {
+    const source = dedent`
+      """Fetch a user"""
+      query GetUser(
+        "id of the user"
+        $id: ID
+      ) {
+        user(id: $id) {
+          ...UserFields
+        }
+      }
+
+      """Common user fields"""
+      fragment UserFields on User {
+        id
+      }
+    `;
+    const ast = parse(source, { noLocation: true });
+
+    const astBeforePrintCall = JSON.stringify(ast);
+    const printed = print(ast);
+    const printedAST = parse(printed, { noLocation: true });
+
+    expect(printedAST).to.deep.equal(ast);
+    expect(JSON.stringify(ast)).to.equal(astBeforePrintCall);
+
+    // A block string description is printed and re-parsed as a block string.
+    const operation = printedAST.definitions[0] as any;
+    const fragment = printedAST.definitions[1] as any;
+    expect(
+      operation.description.block === true &&
+        fragment.description.block === true,
+    ).to.equal(true);
+    // A simple string description keeps its simple form too.
+    expect(operation.variableDefinitions[0].description.block).to.equal(false);
+  });
+
   it('keeps arguments on one line if line is short (<= 80 chars)', () => {
     const printed = print(
       parse('{trip(wheelchair:false arriveBy:false){dateTime}}'),

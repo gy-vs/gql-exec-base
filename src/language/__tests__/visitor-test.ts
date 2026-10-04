@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
 
+import { dedent } from '../../__testUtils__/dedent';
 import { kitchenSinkQuery } from '../../__testUtils__/kitchenSinkQuery';
 
 import type { ASTNode, SelectionSetNode } from '../ast';
@@ -502,6 +503,46 @@ describe('Visitor', () => {
       ['leave', 'SelectionSet', undefined],
       ['leave', 'FragmentDefinition', undefined],
       ['leave', 'Document', undefined],
+    ]);
+  });
+
+  it('visits descriptions on executable definitions', () => {
+    const ast = parse(
+      dedent`
+        "operation"
+        query Q("variable" $v: Boolean = false) { f }
+
+        "fragment"
+        fragment F on T { f }
+      `,
+      { noLocation: true },
+    );
+    const visited: Array<any> = [];
+
+    visit(ast, {
+      enter(node, key, parent) {
+        checkVisitorFnArgs(ast, arguments);
+        if (node.kind === Kind.STRING) {
+          const parentKind = isNode(parent) ? parent.kind : undefined;
+          visited.push(['enter', getValue(node), key, parentKind]);
+        }
+      },
+      leave(node, key, parent) {
+        checkVisitorFnArgs(ast, arguments);
+        if (node.kind === Kind.STRING) {
+          const parentKind = isNode(parent) ? parent.kind : undefined;
+          visited.push(['leave', getValue(node), key, parentKind]);
+        }
+      },
+    });
+
+    expect(visited).to.deep.equal([
+      ['enter', 'operation', 'description', 'OperationDefinition'],
+      ['leave', 'operation', 'description', 'OperationDefinition'],
+      ['enter', 'variable', 'description', 'VariableDefinition'],
+      ['leave', 'variable', 'description', 'VariableDefinition'],
+      ['enter', 'fragment', 'description', 'FragmentDefinition'],
+      ['leave', 'fragment', 'description', 'FragmentDefinition'],
     ]);
   });
 

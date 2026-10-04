@@ -94,7 +94,15 @@ export function ValuesOfCorrectTypeRule(
     EnumValue: (node) => isValidValueNode(context, node),
     IntValue: (node) => isValidValueNode(context, node),
     FloatValue: (node) => isValidValueNode(context, node),
-    StringValue: (node) => isValidValueNode(context, node),
+    StringValue(node, key) {
+      // Descriptions are annotations rather than value literals, so they
+      // must not be checked against the surrounding input type (e.g. the
+      // type of the variable definition a description precedes).
+      if (key === 'description') {
+        return;
+      }
+      isValidValueNode(context, node);
+    },
     BooleanValue: (node) => isValidValueNode(context, node),
   };
 }

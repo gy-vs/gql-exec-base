@@ -1270,3 +1270,55 @@ describe('Execute: Handles basic execution tasks', () => {
     expect(possibleTypes).to.deep.equal([fooObject]);
   });
 });
+
+describe('Execute: Executable descriptions', () => {
+  const schema = new GraphQLSchema({
+    query: new GraphQLObjectType({
+      name: 'Query',
+      fields: {
+        user: {
+          type: new GraphQLObjectType({
+            name: 'User',
+            fields: {
+              id: { type: GraphQLInt },
+              name: { type: GraphQLString },
+            },
+          }),
+          args: { id: { type: GraphQLInt } },
+          resolve: (_source, { id }) => ({ id, name: 'Alice' }),
+        },
+      },
+    }),
+  });
+
+  it('ignores descriptions on operations, fragments and variables', () => {
+    const document = parse(`
+      """Fetch a user"""
+      query GetUser(
+        "id of the user"
+        $id: Int
+      ) {
+        user(id: $id) {
+          id
+          name
+          ...UserFields
+        }
+      }
+
+      """common user fields"""
+      fragment UserFields on User {
+        name
+      }
+    `);
+
+    const result = executeSync({
+      schema,
+      document,
+      variableValues: { id: 7 },
+    });
+
+    expectJSON(result).toDeepEqual({
+      data: { user: { id: 7, name: 'Alice' } },
+    });
+  });
+});

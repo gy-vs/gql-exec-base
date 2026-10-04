@@ -404,6 +404,122 @@ describe('Parser', () => {
     expect(() => parse(document)).to.throw('Syntax Error');
   });
 
+  it('parses description on a named operation', () => {
+    const result = parse('"Fetch user" query Q { a }');
+
+    expectJSON(result).toDeepNestedProperty('definitions[0].description', {
+      kind: Kind.STRING,
+      loc: { start: 0, end: 12 },
+      value: 'Fetch user',
+      block: false,
+    });
+  });
+
+  it('parses block string description on a named operation', () => {
+    const result = parse('"""Fetch user"""\nquery Q { a }');
+
+    expectJSON(result).toDeepNestedProperty('definitions[0].description', {
+      kind: Kind.STRING,
+      loc: { start: 0, end: 16 },
+      value: 'Fetch user',
+      block: true,
+    });
+  });
+
+  it('parses description on a fragment definition', () => {
+    const result = parse('"User fields" fragment F on T { a }');
+
+    expectJSON(result).toDeepNestedProperty('definitions[0].description', {
+      kind: Kind.STRING,
+      loc: { start: 0, end: 13 },
+      value: 'User fields',
+      block: false,
+    });
+  });
+
+  it('parses description on a variable definition', () => {
+    const result = parse('query Q("user id" $id: Int) { a }');
+
+    expectJSON(result).toDeepNestedProperty(
+      'definitions[0].variableDefinitions[0].description',
+      {
+        kind: Kind.STRING,
+        loc: { start: 8, end: 17 },
+        value: 'user id',
+        block: false,
+      },
+    );
+  });
+
+  it('parses descriptions in all supported positions', () => {
+    const result = parse(dedent`
+      """Fetch a user"""
+      query GetUser(
+        "id of the user"
+        $id: Int
+      ) {
+        user(id: $id) {
+          ...UserFields
+        }
+      }
+
+      """Common user fields"""
+      fragment UserFields on User {
+        id
+        name
+      }
+    `);
+
+    const [operation, fragment] = result.definitions;
+    expect(operation).to.have.nested.property(
+      'description.value',
+      'Fetch a user',
+    );
+    expect(operation).nested.property('description.block').to.equal(true);
+    expect(operation).to.have.nested.property(
+      'variableDefinitions[0].description.value',
+      'id of the user',
+    );
+    expect(fragment).to.have.nested.property(
+      'description.value',
+      'Common user fields',
+    );
+    expect(fragment).nested.property('description.block').to.equal(true);
+  });
+
+  it('parses description on a fragment definition with legacy variables', () => {
+    const result = parse('"frag" fragment F($v: Boolean = false) on T { a }', {
+      allowLegacyFragmentVariables: true,
+    });
+
+    expect(result)
+      .nested.property('definitions[0].description.value')
+      .to.equal('frag');
+  });
+
+  it('does not parse description before an anonymous shorthand query', () => {
+    expectSyntaxError('"Description" { a }').to.deep.equal({
+      message: 'Syntax Error: Unexpected "{".',
+      locations: [{ line: 1, column: 15 }],
+    });
+
+    expectSyntaxError('"""Description""" { a }').to.deep.equal({
+      message: 'Syntax Error: Unexpected "{".',
+      locations: [{ line: 1, column: 19 }],
+    });
+  });
+
+  it('parses description on a nameless operation introduced by a keyword', () => {
+    // Only the brace shorthand (`{ a }`) forbids a description; an operation
+    // introduced by a keyword but without a name may carry one.
+    const result = parse('"do mutation" mutation { a }');
+
+    expect(result)
+      .nested.property('definitions[0].description.value')
+      .to.equal('do mutation');
+    expect(result).to.have.nested.property('definitions[0].name', undefined);
+  });
+
   it('contains location that can be Object.toStringified, JSON.stringified, or jsutils.inspected', () => {
     const { loc } = parse('{ id }');
 

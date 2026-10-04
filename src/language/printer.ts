@@ -40,12 +40,17 @@ const printDocASTReducer: ASTReducer<string> = {
 
       // Anonymous queries with no directives or variable definitions can use
       // the query short form.
-      return (prefix === 'query' ? '' : prefix + ' ') + node.selectionSet;
+      return (
+        wrap('', node.description, '\n') +
+        (prefix === 'query' ? '' : prefix + ' ') +
+        node.selectionSet
+      );
     },
   },
 
   VariableDefinition: {
-    leave: ({ variable, type, defaultValue, directives }) =>
+    leave: ({ description, variable, type, defaultValue, directives }) =>
+      wrap('', description, ' ') +
       variable +
       ': ' +
       type +
@@ -91,6 +96,7 @@ const printDocASTReducer: ASTReducer<string> = {
 
   FragmentDefinition: {
     leave: ({
+      description,
       name,
       typeCondition,
       variableDefinitions,
@@ -99,6 +105,7 @@ const printDocASTReducer: ASTReducer<string> = {
     }) =>
       // Note: fragment variable definitions are experimental and may be changed
       // or removed in the future.
+      wrap('', description, '\n') +
       `fragment ${name}${wrap('(', join(variableDefinitions, ', '), ')')} ` +
       `on ${typeCondition} ${wrap('', join(directives, ' '), ' ')}` +
       selectionSet,
